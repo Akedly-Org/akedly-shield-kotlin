@@ -103,6 +103,6 @@ valid = hash.startsWith("0".repeat(difficulty))      // leading hex zeros
 
 ## Related Packages
 
-- **JavaScript**: [`@akedly/shield`](../js/)
-- **Dart/Flutter**: [`akedly_shield`](../dart/)
-- **Swift (iOS)**: [`AkedlyShield`](../swift/)
+- **JavaScript**: [`@akedly/shield`](https://www.npmjs.com/package/@akedly/shield)
+- **Dart/Flutter**: [`akedly_shield`](https://github.com/Akedly-Org/akedly-shield-dart)
+- **Swift (iOS)**: [`AkedlyShield`](https://github.com/Akedly-Org/akedly-shield-swift)
