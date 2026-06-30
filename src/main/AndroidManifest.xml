@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Library manifest. The namespace lives in build.gradle.kts (android.namespace); a library
+     declares no components of its own — the consuming app registers the passkey redirect Activity
+     (see README "Handle the redirect"). -->
+<manifest />
