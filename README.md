@@ -292,6 +292,28 @@ fun verifyAkedlyResult(token: String, apiKey: String): AkedlyClaim? {
 
 Treat the token like a one-time auth code: short-lived (~10 min) and accepted once.
 
+### Local vs on-device testing
+
+The `ceremonyOrigin` decides which auth-gateway runs the WebAuthn ceremony — and therefore the
+relying-party (RP) ID the passkey binds to.
+
+- **Android Emulator (local).** Use a system image **with Google Play Services** and a
+  configured **screen lock** (PIN / pattern / biometric) — the platform authenticator
+  (Credential Manager) refuses to create passkeys without one. Pass
+  `ceremonyOrigin = "http://localhost:5174"` to run the ceremony on the local auth-gateway with
+  RP=`localhost` (accepted on the emulator). Because the emulator's `localhost` is the emulator
+  itself, tunnel the host with **`adb reverse tcp:5174 tcp:5174`** (and `tcp:4100` for your token
+  backend) so the ceremony origin stays `localhost`. Do **not** point `ceremonyOrigin` at the host
+  alias `10.0.2.2` — over plain HTTP it is not a trustworthy WebAuthn origin and would bind the
+  passkey to the wrong RP; `10.0.2.2` is fine for your token backend, but keep the ceremony on
+  `localhost`.
+- **Real device (prod).** Use the default `ceremonyOrigin` (`https://auth.akedly.io`,
+  RP=`akedly.io`) — a `localhost` RP cannot bind on a physical device.
+
+> There is a full end-to-end V1.2 sandbox — web plus all four mobile SDK reference apps, with a
+> headless Playwright + Chrome virtual-authenticator gate — for exercising this loop without a
+> physical device.
+
 ### Without the SDK (open the page yourself)
 
 `AkedlyPasskey` is a thin wrapper. The ceremony is just a URL you open in a Custom Tab /
