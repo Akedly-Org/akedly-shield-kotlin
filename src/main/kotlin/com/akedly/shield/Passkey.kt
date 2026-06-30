@@ -95,8 +95,11 @@ object AkedlyPasskey {
             if (pair.isEmpty()) continue
             val i = pair.indexOf('=')
             if (i < 0) continue
-            val k = URLDecoder.decode(pair.substring(0, i), "UTF-8")
-            val v = URLDecoder.decode(pair.substring(i + 1), "UTF-8")
+            // URLDecoder.decode throws on malformed percent-encoding (e.g. `verified=%`). This is a
+            // public parser fed external redirect input, so skip a bad pair rather than crash — a
+            // missing `verified` then yields verified=false (a failed result), never an exception.
+            val k = try { URLDecoder.decode(pair.substring(0, i), "UTF-8") } catch (e: Exception) { continue }
+            val v = try { URLDecoder.decode(pair.substring(i + 1), "UTF-8") } catch (e: Exception) { continue }
             params[k] = v
         }
         return build(

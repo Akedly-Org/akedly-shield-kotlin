@@ -226,7 +226,8 @@ export function verifyAkedlyResult(token, apiKey) {
   if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) return null;
   const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
   if (!payload.exp || Date.now() > payload.exp) return null;        // expired
-  return payload; // { verified, purpose, transactionId, pipelineId, ... } — trust it
+  if (payload.verified !== true) return null;                       // only a verified outcome is trustworthy
+  return payload; // verified + unexpired — the caller MUST still bind payload.transactionId to the ceremony it started
 }
 ```
 
@@ -249,6 +250,7 @@ data class AkedlyClaim(
 )
 
 fun verifyAkedlyResult(token: String, apiKey: String): AkedlyClaim? {
+    if (apiKey.isBlank()) return null                              // fail closed: never HMAC under an empty key
     val prefix = "pkrt1."
     if (!token.startsWith(prefix)) return null
     val segments = token.substring(prefix.length).split(".")
@@ -272,13 +274,14 @@ fun verifyAkedlyResult(token: String, apiKey: String): AkedlyClaim? {
     val payload = try {
         JSONObject(String(urlDecoder.decode(dataSegment), Charsets.UTF_8))
     } catch (e: Exception) { return null }
-    if (System.currentTimeMillis() > payload.getLong("exp")) return null   // expired
+    val exp = payload.optLong("exp", 0L)                           // 0 if missing/non-numeric (no throw)
+    if (exp <= 0L || System.currentTimeMillis() > exp) return null // missing/invalid or expired
     return AkedlyClaim(
         verified = payload.optBoolean("verified", false),
         purpose = payload.optString("purpose").ifEmpty { null },
         transactionId = payload.optString("transactionId").ifEmpty { null },
         pipelineId = payload.optString("pipelineId").ifEmpty { null },
-        exp = payload.getLong("exp")
+        exp = exp
     )
 }
 

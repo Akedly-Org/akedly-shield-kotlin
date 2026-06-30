@@ -58,4 +58,18 @@ class PasskeyTest {
         assertNull(r.resultToken)
         assertEquals("no_proof", r.reason)
     }
+
+    @Test
+    fun testWhitespaceOnlyResultTokenIsNotTrusted() {
+        val r = AkedlyPasskey.parseResultFromQuery("verified=true&resultToken=%20%20")
+        assertFalse(r.verified)
+        assertEquals("no_proof", r.reason)
+    }
+
+    @Test
+    fun testMalformedQueryEncodingIsAFailedResultNotACrash() {
+        // A malformed %-escape must not throw out of the public parser.
+        val r = AkedlyPasskey.parseResultFromQuery("verified=%&resultToken=pkrt1.a.b")
+        assertFalse(r.verified)
+    }
 }
