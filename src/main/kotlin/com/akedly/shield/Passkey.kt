@@ -1,5 +1,6 @@
 package com.akedly.shield
 
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -22,9 +23,16 @@ data class AkedlyPasskeyResult(
     val transactionId: String?,
     /** Signed, offline-verifiable proof of a verified outcome. null on a non-verified outcome. */
     val resultToken: String?,
-    /** null when verified; else "closed" | "ineligible" | <server code>. */
+    /** null when verified; else "closed" | "ineligible" | "no_proof" | "failed" | <server code>. */
     val reason: String?
 )
+
+/**
+ * Thrown by [AkedlyPasskey.launch] when the ceremony URL cannot be opened — e.g. no browser or
+ * `ACTION_VIEW` handler is installed on the device (the wrapped [ActivityNotFoundException]).
+ * Catch it to fall back to OTP. Mirrors `AkedlyTurnstileException`.
+ */
+class AkedlyPasskeyException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**
  * Hosted V1.2 passkey ceremony for Android.
@@ -60,9 +68,21 @@ object AkedlyPasskey {
      * Launch the ceremony in the system browser. The result returns to your deep-link
      * Activity (which calls [parseResult]). Uses a plain VIEW intent — for a smoother
      * in-app experience launch a Custom Tab instead (see README), the URL is the same.
+     *
+     * **Cancellation contract.** A plain VIEW intent is fire-and-forget: it hands off to the
+     * browser and cannot signal a user dismissal back to the caller. If the user abandons the
+     * browser, no redirect fires and no [AkedlyPasskeyResult] is ever produced — detect that from
+     * your redirect Activity's lifecycle (you resumed without having received a redirect) and
+     * treat it as a cancel/OTP fallback. A ceremony the *page itself* cancels does redirect back,
+     * yielding `reason = "closed"`.
+     *
+     * @throws AkedlyPasskeyException if no browser or `ACTION_VIEW` handler can open the ceremony
+     *   URL (a device with no browser installed). Catch it and fall back to OTP — an uncaught
+     *   [ActivityNotFoundException] would otherwise crash the caller.
      */
     @JvmStatic
     @JvmOverloads
+    @Throws(AkedlyPasskeyException::class)
     fun launch(
         context: Context,
         token: String,
@@ -71,7 +91,15 @@ object AkedlyPasskey {
     ) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(buildUrl(token, callbackScheme, ceremonyOrigin)))
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
+        try {
+            context.startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            throw AkedlyPasskeyException(
+                "No browser or ACTION_VIEW handler is available to open the passkey ceremony; " +
+                    "fall back to OTP.",
+                e
+            )
+        }
     }
 
     /** Parse the deep-link redirect `Uri` your Activity received into a result. */

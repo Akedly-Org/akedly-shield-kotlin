@@ -110,14 +110,20 @@ to your app's custom scheme. **No WebView, no Digital Asset Links.**
 
 ```kotlin
 import com.akedly.shield.AkedlyPasskey
+import com.akedly.shield.AkedlyPasskeyException
 
 // 1. Your backend clears the gate + starts the ceremony:
 //    POST /api/v1.2/transactions/passkey/auth-options  -> { data: { ceremonyToken } }
 val ceremonyToken = myBackend.startPasskeyAuth(phone)   // or a "no passkey" code -> use OTP
 
 // 2. Launch it. The result returns to your redirect Activity (below).
-AkedlyPasskey.launch(context, ceremonyToken, callbackScheme = "myapp")
-// for QA: AkedlyPasskey.launch(context, token, "myapp", ceremonyOrigin = "http://localhost:5174")
+//    launch() throws AkedlyPasskeyException if the device has no browser to open the ceremony.
+try {
+    AkedlyPasskey.launch(context, ceremonyToken, callbackScheme = "myapp")
+    // for QA: AkedlyPasskey.launch(context, token, "myapp", ceremonyOrigin = "http://localhost:5174")
+} catch (e: AkedlyPasskeyException) {
+    // no browser / ACTION_VIEW handler on the device -> fall back to OTP
+}
 ```
 
 Register a tiny redirect `Activity` for the scheme, and parse the result:
@@ -143,7 +149,7 @@ class PasskeyRedirectActivity : Activity() {
             // 3. Confirm offline on YOUR backend (no polling, no callback) — see below.
             myBackend.completeSignIn(result.resultToken!!)
         } else {
-            // result.reason: "closed" | "ineligible" | <server code> -> OTP fallback
+            // result.reason: "closed" | "ineligible" | "no_proof" | "failed" | <server code> -> OTP fallback
         }
         finish()
     }
