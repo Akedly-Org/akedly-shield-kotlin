@@ -1,6 +1,6 @@
 # AkedlyShield (Kotlin)
 
-Client-side PoW solver and Turnstile helper for Akedly Shield V1.2 (Android/JVM).
+Client-side PoW solver, Turnstile helper, and passkey launcher for Akedly Shield V1.2 (Android). Published as an Android library (AAR): the Turnstile helper needs a `WebView` and the passkey launcher needs `Intent`/`Uri`, so the artifact targets Android, not a plain JVM. The PoW solver itself is pure Kotlin — copy it into a JVM/server project if you need server-side solving.
 
 ## Installation
 
@@ -144,12 +144,14 @@ Register a tiny redirect `Activity` for the scheme, and parse the result:
 class PasskeyRedirectActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val result = AkedlyPasskey.parseResult(intent.data!!)
+        // A third party can target this exported Activity with no data — bail out, don't NPE.
+        val data = intent?.data ?: run { finish(); return }
+        val result = AkedlyPasskey.parseResult(data)
         if (result.verified) {
             // 3. Confirm offline on YOUR backend (no polling, no callback) — see below.
             myBackend.completeSignIn(result.resultToken!!)
         } else {
-            // result.reason: "closed" | "ineligible" | "no_proof" | "failed" | <server code> -> OTP fallback
+            // result.reason: "no_proof" | "failed" -> OTP fallback
         }
         finish()
     }
@@ -158,6 +160,26 @@ class PasskeyRedirectActivity : Activity() {
 
 To **enroll** a passkey, pass the `enrollmentToken` from a successful OTP `/verify` as the
 token instead — same API; enrollment is proven on the next successful sign-in.
+
+### Custom Tab (optional)
+
+`AkedlyPasskey.launch` fires a plain VIEW intent; for a smoother in-app feel, open the same
+URL in a Custom Tab instead. Both a full browser and a Custom Tab run on the user's default
+browser, so they share the same Credential Manager passkeys.
+
+```kotlin
+dependencies {
+    implementation("androidx.browser:browser:1.7.0")
+}
+```
+
+```kotlin
+import androidx.browser.customtabs.CustomTabsIntent
+
+// buildUrl returns a String — parse it into a Uri for the Custom Tab.
+val url = Uri.parse(AkedlyPasskey.buildUrl(ceremonyToken, callbackScheme = "myapp"))
+CustomTabsIntent.Builder().build().launchUrl(context, url)
+```
 
 ### Verify the result (seamless — no polling)
 
@@ -181,10 +203,10 @@ pkrt1.<base64url(payloadJSON)>.<base64url(signature)>
 
 ```json
 { "v": 1, "purpose": "auth", "transactionId": "…", "pipelineId": "…",
-  "verified": true, "iat": 1730000000000, "exp": 1730000600000 }
+  "verified": true, "iat": 1730000000000, "exp": 1730000120000 }
 ```
 
-`iat`/`exp` are **milliseconds** since the Unix epoch (`exp` ≈ 10 minutes after `iat`).
+`iat`/`exp` are **milliseconds** since the Unix epoch (`exp` ≈ 2 minutes after `iat`).
 
 **The signature — exactly what is HMAC'd, in this order**
 
@@ -227,10 +249,14 @@ export function verifyAkedlyResult(token, apiKey) {
   const [data, sig] = parts;
   const b64u = /^[A-Za-z0-9_-]+$/;                                  // strict unpadded base64url
   if (!b64u.test(data) || !b64u.test(sig)) return null;            // no alternate serializations
+  // string-keyed single-use checks must see one canonical serialization
+  if (Buffer.from(data, 'base64url').toString('base64url') !== data ||
+      Buffer.from(sig, 'base64url').toString('base64url') !== sig) return null;
   const expected = crypto.createHmac('sha256', apiKey).update('pkrt1.' + data).digest();
   const given = Buffer.from(sig, 'base64url');
   if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) return null;
-  const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
+  let payload;
+  try { payload = JSON.parse(Buffer.from(data, 'base64url').toString()); } catch { return null; }
   if (!payload.exp || Date.now() > payload.exp) return null;        // expired
   if (payload.verified !== true) return null;                       // only a verified outcome is trustworthy
   return payload; // verified + unexpired — the caller MUST still bind payload.transactionId to the ceremony it started
@@ -274,11 +300,16 @@ fun verifyAkedlyResult(token: String, apiKey: String): AkedlyClaim? {
     val expected = mac.doFinal((prefix + dataSegment).toByteArray(Charsets.UTF_8))  // "pkrt1." + dataSegment
 
     val urlDecoder = Base64.getUrlDecoder()
+    val urlEncoder = Base64.getUrlEncoder().withoutPadding()
     val provided = try { urlDecoder.decode(sigSegment) } catch (e: Exception) { return null }
+    val dataBytes = try { urlDecoder.decode(dataSegment) } catch (e: Exception) { return null }
+    // string-keyed single-use checks must see one canonical serialization
+    if (urlEncoder.encodeToString(provided) != sigSegment ||
+        urlEncoder.encodeToString(dataBytes) != dataSegment) return null
     if (!MessageDigest.isEqual(expected, provided)) return null     // constant-time
 
     val payload = try {
-        JSONObject(String(urlDecoder.decode(dataSegment), Charsets.UTF_8))
+        JSONObject(String(dataBytes, Charsets.UTF_8))
     } catch (e: Exception) { return null }
     val exp = payload.optLong("exp", 0L)                           // 0 if missing/non-numeric (no throw)
     if (exp <= 0L || System.currentTimeMillis() > exp) return null // missing/invalid or expired
@@ -296,7 +327,7 @@ fun verifyAkedlyResult(token: String, apiKey: String): AkedlyClaim? {
 //   if (claim != null && claim.verified && claim.transactionId == expectedTxId) createSession(user)
 ```
 
-Treat the token like a one-time auth code: short-lived (~10 min) and accepted once.
+Treat the token like a one-time auth code: short-lived (~2 min) and accepted once.
 
 ### Local vs on-device testing
 

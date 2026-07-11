@@ -72,4 +72,39 @@ class PasskeyTest {
         val r = AkedlyPasskey.parseResultFromQuery("verified=%&resultToken=pkrt1.a.b")
         assertFalse(r.verified)
     }
+
+    @Test
+    fun testRepeatedParamKeepsLastOccurrence() {
+        // Documents current behavior: on a duplicated key the last occurrence wins.
+        val r = AkedlyPasskey.parseResultFromQuery(
+            "purpose=auth&purpose=enroll&verified=true&resultToken=pkrt1.a.b"
+        )
+        assertTrue(r.verified)
+        assertEquals("enroll", r.purpose)
+    }
+
+    @Test
+    fun testValuelessKeyIsAFailedResultNotACrash() {
+        val r = AkedlyPasskey.parseResultFromQuery("?verified")
+        assertFalse(r.verified)
+        assertEquals("failed", r.reason)
+    }
+
+    @Test
+    fun testBlankParamsNormalizeToNull() {
+        // The gateway emits purpose/transactionId as empty strings when unknown — surface null.
+        val r = AkedlyPasskey.parseResultFromQuery(
+            "verified=true&purpose=&transactionId=&resultToken=pkrt1.a.b"
+        )
+        assertTrue(r.verified)
+        assertNull(r.purpose)
+        assertNull(r.transactionId)
+    }
+
+    @Test
+    fun testBlankCodeFallsBackToFailed() {
+        val r = AkedlyPasskey.parseResultFromQuery("verified=false&code=")
+        assertFalse(r.verified)
+        assertEquals("failed", r.reason)
+    }
 }

@@ -17,13 +17,16 @@ import java.net.URLEncoder
 data class AkedlyPasskeyResult(
     /** True only on a completed, server-verified ceremony. */
     val verified: Boolean,
-    /** "auth" | "enroll" (null if the page didn't report it). */
+    /** "auth" | "enroll" (null when the page reports it blank or not at all). */
     val purpose: String?,
-    /** The passkey transaction/request id. */
+    /** The passkey transaction/request id (null when blank or absent). */
     val transactionId: String?,
     /** Signed, offline-verifiable proof of a verified outcome. null on a non-verified outcome. */
     val resultToken: String?,
-    /** null when verified; else "closed" | "ineligible" | "no_proof" | "failed" | <server code>. */
+    /**
+     * null when verified; else "no_proof" | "failed". A server `code` param is reserved in the
+     * redirect contract but the /pk page currently never sends one.
+     */
     val reason: String?
 )
 
@@ -73,8 +76,8 @@ object AkedlyPasskey {
      * browser and cannot signal a user dismissal back to the caller. If the user abandons the
      * browser, no redirect fires and no [AkedlyPasskeyResult] is ever produced — detect that from
      * your redirect Activity's lifecycle (you resumed without having received a redirect) and
-     * treat it as a cancel/OTP fallback. A ceremony the *page itself* cancels does redirect back,
-     * yielding `reason = "closed"`.
+     * treat it as a cancel/OTP fallback. The /pk page has no cancel redirect of its own —
+     * abandonment in any form produces no redirect at all.
      *
      * @throws AkedlyPasskeyException if no browser or `ACTION_VIEW` handler can open the ceremony
      *   URL (a device with no browser installed). Catch it and fall back to OTP — an uncaught
@@ -104,13 +107,21 @@ object AkedlyPasskey {
 
     /** Parse the deep-link redirect `Uri` your Activity received into a result. */
     @JvmStatic
-    fun parseResult(uri: Uri): AkedlyPasskeyResult = build(
-        verifiedRaw = uri.getQueryParameter("verified") == "true",
-        purpose = uri.getQueryParameter("purpose"),
-        transactionId = uri.getQueryParameter("transactionId"),
-        resultToken = uri.getQueryParameter("resultToken"),
-        code = uri.getQueryParameter("code")
-    )
+    fun parseResult(uri: Uri): AkedlyPasskeyResult = try {
+        build(
+            verifiedRaw = uri.getQueryParameter("verified") == "true",
+            purpose = uri.getQueryParameter("purpose"),
+            transactionId = uri.getQueryParameter("transactionId"),
+            resultToken = uri.getQueryParameter("resultToken"),
+            code = uri.getQueryParameter("code")
+        )
+    } catch (e: Exception) {
+        // Uri.getQueryParameter throws on an opaque (non-hierarchical) Uri — e.g. a hostile
+        // explicit intent carrying `myapp:akedly-passkey?verified=true`. This is a public parser
+        // fed external redirect input, so report a failed result rather than crash, mirroring
+        // parseResultFromQuery.
+        build(verifiedRaw = false, purpose = null, transactionId = null, resultToken = null, code = null)
+    }
 
     /**
      * Parse a result from a raw `key=value&…` query string. Pure (no Android deps) so it is
@@ -154,12 +165,13 @@ object AkedlyPasskey {
         code: String?
     ): AkedlyPasskeyResult {
         val verified = verifiedRaw && !resultToken.isNullOrBlank()
+        val normalizedCode = code?.takeIf { it.isNotBlank() }
         return AkedlyPasskeyResult(
             verified = verified,
-            purpose = purpose,
-            transactionId = transactionId,
+            purpose = purpose?.takeIf { it.isNotBlank() },
+            transactionId = transactionId?.takeIf { it.isNotBlank() },
             resultToken = if (verified) resultToken else null,
-            reason = if (verified) null else if (verifiedRaw) "no_proof" else (code ?: "failed")
+            reason = if (verified) null else if (verifiedRaw) "no_proof" else (normalizedCode ?: "failed")
         )
     }
 }
