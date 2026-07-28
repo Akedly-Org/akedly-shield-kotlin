@@ -161,6 +161,14 @@ class PasskeyRedirectActivity : Activity() {
 To **enroll** a passkey, pass the `enrollmentToken` from a successful OTP `/verify` as the
 token instead — same API; enrollment is proven on the next successful sign-in.
 
+> ⚠️ **Enrollment's result is unproven unless you ask for the proof.** The hosted page relays a
+> `resultToken` only to a **server-signed** return target, and the enrollment token carries one only
+> if your backend passed `returnTarget` to `/verify` (e.g. `{ "url": "myapp://akedly-passkey" }`).
+> Omit it and enrollment still succeeds — the passkey is created and works — but this SDK reports
+> `verified: false` / `no_proof`, because it refuses to call an unproven result verified. So either
+> pass `returnTarget` at `/verify`, or treat the enroll result as advisory and let the next
+> successful sign-in be the proof. Do not gate your "passkey enabled" UI on the enroll result alone.
+
 ### Verify the result (seamless — no polling)
 
 A verified ceremony carries a **`resultToken`**: a compact, signed proof of the outcome. You

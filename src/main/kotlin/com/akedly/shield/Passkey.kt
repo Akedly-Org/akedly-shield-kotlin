@@ -1,5 +1,6 @@
 package com.akedly.shield
 
+import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -41,8 +42,8 @@ class AkedlyPasskeyException(message: String, cause: Throwable? = null) : Except
 /**
  * Hosted V1.2 passkey ceremony for Android.
  *
- * The ceremony runs in the system browser (a Custom Tab / the default browser) on the
- * akedly.io origin — so platform passkeys (fingerprint / face / device PIN via Credential
+ * The ceremony always runs in a Chrome Custom Tab, rendered by the device's default browser, on
+ * the akedly.io origin — so platform passkeys (fingerprint / face / device PIN via Credential
  * Manager) work — and returns via a deep link to your app's custom scheme. You register a
  * tiny redirect `Activity` (an `<intent-filter>` on the scheme) that hands the `Uri` to
  * [parseResult]. No WebView, no Digital Asset Links setup. See the README for the Activity +
@@ -72,13 +73,22 @@ object AkedlyPasskey {
      * Launch the ceremony in a browser-backed Custom Tab. The result returns to your deep-link
      * Activity (which calls [parseResult]).
      *
-     * **Cancellation contract.** A Custom Tab is fire-and-forget: it cannot signal a user
-     * dismissal back to the caller. If the user abandons the browser, no redirect fires and no
-     * [AkedlyPasskeyResult] is ever produced — detect that from your redirect Activity's
-     * lifecycle (you resumed without having received a redirect) and treat it as a cancel/OTP
-     * fallback. The /pk page has no cancel redirect of its own — abandonment in any form produces
-     * no redirect at all.
+     * **Cancellation contract.** This launch is fire-and-forget: the SDK binds no
+     * `CustomTabsSession`, so a user dismissal is never signalled back to the caller. If the user
+     * abandons the browser, no redirect fires and no [AkedlyPasskeyResult] is ever produced — the
+     * /pk page has no cancel redirect of its own, so abandonment in any form produces no redirect
+     * at all.
      *
+     * **Detect it on the CALLING Activity, not on your redirect Activity.** Your redirect Activity
+     * only ever exists *because* a redirect arrived — on abandonment it is never instantiated, so
+     * watching its lifecycle detects nothing and the user waits forever with no OTP fallback. The
+     * correct signal is your calling Activity resuming without [parseResult] having delivered a
+     * result: set a "ceremony in flight" flag before [launch], clear it in [parseResult], and on
+     * the calling Activity's `onResume` treat a still-set flag as a cancel.
+     *
+     * @param context prefer an `Activity`. With one, the Custom Tab opens inside your task, which
+     *   is the intended experience; any other context must be launched into a separate task
+     *   (`FLAG_ACTIVITY_NEW_TASK`), which behaves like the old browser kick-out.
      * @throws AkedlyPasskeyException if no browser can open the Custom Tab ceremony URL. Catch it
      *   and fall back to OTP — an uncaught [ActivityNotFoundException] would otherwise crash the
      *   caller.
@@ -93,7 +103,7 @@ object AkedlyPasskey {
         ceremonyOrigin: String = DEFAULT_ORIGIN
     ) {
         val customTab = CustomTabsIntent.Builder().build()
-        customTab.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (context !is Activity) customTab.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
             customTab.launchUrl(context, Uri.parse(buildUrl(token, callbackScheme, ceremonyOrigin)))
         } catch (e: ActivityNotFoundException) {

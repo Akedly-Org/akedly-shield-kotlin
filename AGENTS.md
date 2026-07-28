@@ -37,10 +37,21 @@ succeed. If you cannot build, say so plainly and state what you verified by read
 - Parsers are fed hostile external input (a redirect `Uri` any app can fire at the deep-link
   Activity). They must **never throw** — return a failed result instead.
 
-## The cross-SDK contract (identical in swift / dart / js — do not diverge)
+## The cross-SDK contract (swift / dart / js)
+
+**Clauses 1–2 are identical across all four SDKs — do not diverge.** Clause 3's `reason`
+vocabulary is deliberately **per-platform** and is NOT expected to match: Swift carries seven
+values, Dart five, and this SDK two, because a Custom Tab cannot signal a user cancel at all.
+Aligning them would mean inventing values a platform cannot actually produce.
+
+**`ceremonyOrigin` must be a bare origin** — `scheme://host[:port]`, no path, no trailing slash.
+The four SDKs normalize it differently (JS reduces to a true origin because it reuses the value in
+the `event.origin` equality check; the natives only prefix a URL), so a path-carrying or
+multi-slash value behaves differently per platform. It fails visibly — the ceremony 404s — so this
+is a documented input contract, not a code divergence to "fix".
 
 1. **A verified result MUST carry a `resultToken`.** `verified = verifiedRaw && !resultToken.isNullOrBlank()`
-   (`Passkey.kt:167`). A bare `?verified=true` with no token is reported `verified = false`,
+   (`Passkey.kt:177`). A bare `?verified=true` with no token is reported `verified = false`,
    `reason = "no_proof"` — never as a trusted success. **Fail closed. This is the whole security
    property of the relayed result** — the redirect arrives over a custom scheme any local app can
    forge, so the token is the only real proof.
@@ -56,27 +67,41 @@ succeed. If you cannot build, say so plainly and state what you verified by read
    code (the real set is `NO_PASSKEY`, `PASSKEY_DISABLED`, `INSUFFICIENT_QUOTA`, `BILLING_FAILED`,
    `CANCELLED`, `FAILED`).
 
-## Live task — the shipped launcher does NOT meet the requirement (OI-G)
+## Custom Tabs — ✅ SHIPPED in `da7ece7` (OI-G closed). Preserve these constraints.
 
-`AkedlyPasskey.launch()` (`Passkey.kt:89-106`) opens the ceremony with a plain
-`Intent(Intent.ACTION_VIEW, …)`. **Chrome Custom Tabs is required, not optional** — it is what makes
-the V2 flow work, and the equivalent rule holds on every platform (iOS uses
-`ASWebAuthenticationSession`, Flutter delegates to both via `flutter_web_auth_2`). Right now Custom
-Tabs appears only as an optional recipe in the README, and `androidx.browser` is not even declared as
-a dependency.
+`AkedlyPasskey.launch()` uses `CustomTabsIntent` (`Passkey.kt:105`) and the module declares
+`androidx.browser:browser:1.7.0`. **An earlier version of this section said the opposite** — that
+the launcher was still a plain `Intent.ACTION_VIEW` and `androidx.browser` was undeclared, and it
+ordered a KDoc update that had already happened. Both claims were false at `da7ece7`. Codex reads
+this file *instead of* `CLAUDE.md`, so leaving that here meant the next run would inherit "the fix is
+pending" as ground truth and redo or misreport it. Do not reseed it.
 
-The fix is a dependency plus a `launch()` body swap to `CustomTabsIntent`:
+What must be preserved when touching `launch()`:
 
-- Keep the `ActivityNotFoundException → AkedlyPasskeyException` fallback — a device with no browser
-  must still fail cleanly so the caller can fall back to OTP, not crash.
-- `buildUrl` and `parseResult` do not change.
-- **The cancellation contract does not change either, and the KDoc must keep saying so.** A Custom
-  Tab is still fire-and-forget: it cannot signal a user dismissal back to the caller. If the user
-  abandons the browser, no redirect fires and no result is ever produced — the caller detects that
-  from its redirect Activity's lifecycle. `/pk` has no cancel redirect of its own. (This is the one
-  real behavioural difference from iOS, where `ASWebAuthenticationSession` *does* report a cancel.)
-- Update the KDoc at `Passkey.kt:71-73`, which currently tells customers a plain VIEW intent is what
-  ships and Custom Tabs is the upgrade. After the fix that sentence is backwards.
+- **The `ActivityNotFoundException → AkedlyPasskeyException` fallback.** A device with no browser
+  must fail cleanly so the caller falls back to OTP, not crash.
+- **The akedly.io-origin / no-WebView rule.** Platform passkeys do not work in a `WebView`.
+- **`buildUrl` and `parseResult` do not change** — they are the pure, JVM-testable half.
+- **The cancellation contract**, which is the one real behavioural difference from iOS (where
+  `ASWebAuthenticationSession` *does* report a cancel). Get the detection point right: **the signal
+  lives on the CALLING Activity, not the redirect Activity.** The redirect Activity only exists
+  *because* a redirect arrived (README:133 makes it `singleTask`), so on abandonment it is never
+  instantiated and watching its lifecycle detects nothing — the user waits forever with no OTP
+  fallback. Detect a still-set "in flight" flag on the calling Activity's `onResume`. The KDoc at
+  `Passkey.kt:76-87` says this correctly; keep the two in step.
+- **`FLAG_ACTIVITY_NEW_TASK` is conditional on purpose** (`Passkey.kt:106`, added at triage after the
+  S3 review): an `Activity` context opens the tab *inside* the caller's task, which is the whole
+  point of Custom Tabs. Adding the flag unconditionally launches a separate task — API-shaped like a
+  Custom Tab, UX-shaped like the old browser kick-out. Non-Activity contexts still get the flag,
+  because an Application context without it throws `AndroidRuntimeException`, which would escape the
+  `ActivityNotFoundException` catch and crash the caller.
+
+**Build constraint:** `androidx.browser:browser:1.7.0`'s AAR requires `minCompileSdk=34`, and this
+module sits at exactly 34 — **zero margin. Do not lower `compileSdk`.**
+
+⚠️ **None of this has ever been compiled** (OI-B): no JDK/Android SDK is available in this
+environment. The launcher was verified by reading and by bytecode inspection of the dependency —
+raising confidence, but **not a compile, and it must never be relayed as one.**
 
 ## Gotchas
 
