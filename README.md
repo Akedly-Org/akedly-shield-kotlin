@@ -103,8 +103,8 @@ valid = hash.startsWith("0".repeat(difficulty))      // leading hex zeros
 
 ## Passkeys (V1.2)
 
-Run a hosted V1.2 passkey ceremony on `auth.akedly.io/pk` from an Android app. The ceremony
-runs in the **system browser / a Custom Tab** on the akedly.io origin — so platform passkeys
+Run a hosted V1.2 passkey ceremony on `auth.akedly.io/pk` from an Android app. The shipped
+launcher opens a **browser-backed Custom Tab** on the akedly.io origin — so platform passkeys
 (fingerprint / face / device PIN via Credential Manager) work — and returns via a **deep link**
 to your app's custom scheme. **No WebView, no Digital Asset Links.**
 
@@ -122,7 +122,7 @@ try {
     AkedlyPasskey.launch(context, ceremonyToken, callbackScheme = "myapp")
     // for QA: AkedlyPasskey.launch(context, token, "myapp", ceremonyOrigin = "http://localhost:5174")
 } catch (e: AkedlyPasskeyException) {
-    // no browser / ACTION_VIEW handler on the device -> fall back to OTP
+    // no browser available on the device -> fall back to OTP
 }
 ```
 
@@ -160,26 +160,6 @@ class PasskeyRedirectActivity : Activity() {
 
 To **enroll** a passkey, pass the `enrollmentToken` from a successful OTP `/verify` as the
 token instead — same API; enrollment is proven on the next successful sign-in.
-
-### Custom Tab (optional)
-
-`AkedlyPasskey.launch` fires a plain VIEW intent; for a smoother in-app feel, open the same
-URL in a Custom Tab instead. Both a full browser and a Custom Tab run on the user's default
-browser, so they share the same Credential Manager passkeys.
-
-```kotlin
-dependencies {
-    implementation("androidx.browser:browser:1.7.0")
-}
-```
-
-```kotlin
-import androidx.browser.customtabs.CustomTabsIntent
-
-// buildUrl returns a String — parse it into a Uri for the Custom Tab.
-val url = Uri.parse(AkedlyPasskey.buildUrl(ceremonyToken, callbackScheme = "myapp"))
-CustomTabsIntent.Builder().build().launchUrl(context, url)
-```
 
 ### Verify the result (seamless — no polling)
 

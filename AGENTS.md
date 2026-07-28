@@ -49,8 +49,12 @@ succeed. If you cannot build, say so plainly and state what you verified by read
    their Akedly API key. No polling, no server-to-server callback needed.
 3. **`reason` vocabulary:** `null` when verified, else `"no_proof"` or `"failed"`. A server `code`
    param is reserved in the redirect contract but `/pk` never sends one today.
-   ⚠️ Swift and Dart document an `ineligible` value that **no code can emit**, and the JS SDK emits
-   `"failed"` without documenting it. Do not copy either mistake into this repo.
+   ⚠️ Swift, Dart and JS all documented an `ineligible` value **no server ever sends** — fixed
+   2026-07-28 in all three, along with READMEs that omitted `no_proof` and `failed`, the values that
+   actually fire. Do not reintroduce any of that here. Precisely: the native SDKs *can* surface
+   `ineligible` by server-`code` passthrough; it is unreachable only because no server sends that
+   code (the real set is `NO_PASSKEY`, `PASSKEY_DISABLED`, `INSUFFICIENT_QUOTA`, `BILLING_FAILED`,
+   `CANCELLED`, `FAILED`).
 
 ## Live task — the shipped launcher does NOT meet the requirement (OI-G)
 

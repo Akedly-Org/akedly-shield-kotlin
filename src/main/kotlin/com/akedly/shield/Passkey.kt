@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.browser.customtabs.CustomTabsIntent
 import java.net.URLDecoder
 import java.net.URLEncoder
 
@@ -31,8 +32,8 @@ data class AkedlyPasskeyResult(
 )
 
 /**
- * Thrown by [AkedlyPasskey.launch] when the ceremony URL cannot be opened — e.g. no browser or
- * `ACTION_VIEW` handler is installed on the device (the wrapped [ActivityNotFoundException]).
+ * Thrown by [AkedlyPasskey.launch] when the ceremony URL cannot be opened — e.g. no browser is
+ * installed on the device (the wrapped [ActivityNotFoundException]).
  * Catch it to fall back to OTP. Mirrors `AkedlyTurnstileException`.
  */
 class AkedlyPasskeyException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -68,20 +69,19 @@ object AkedlyPasskey {
     }
 
     /**
-     * Launch the ceremony in the system browser. The result returns to your deep-link
-     * Activity (which calls [parseResult]). Uses a plain VIEW intent — for a smoother
-     * in-app experience launch a Custom Tab instead (see README), the URL is the same.
+     * Launch the ceremony in a browser-backed Custom Tab. The result returns to your deep-link
+     * Activity (which calls [parseResult]).
      *
-     * **Cancellation contract.** A plain VIEW intent is fire-and-forget: it hands off to the
-     * browser and cannot signal a user dismissal back to the caller. If the user abandons the
-     * browser, no redirect fires and no [AkedlyPasskeyResult] is ever produced — detect that from
-     * your redirect Activity's lifecycle (you resumed without having received a redirect) and
-     * treat it as a cancel/OTP fallback. The /pk page has no cancel redirect of its own —
-     * abandonment in any form produces no redirect at all.
+     * **Cancellation contract.** A Custom Tab is fire-and-forget: it cannot signal a user
+     * dismissal back to the caller. If the user abandons the browser, no redirect fires and no
+     * [AkedlyPasskeyResult] is ever produced — detect that from your redirect Activity's
+     * lifecycle (you resumed without having received a redirect) and treat it as a cancel/OTP
+     * fallback. The /pk page has no cancel redirect of its own — abandonment in any form produces
+     * no redirect at all.
      *
-     * @throws AkedlyPasskeyException if no browser or `ACTION_VIEW` handler can open the ceremony
-     *   URL (a device with no browser installed). Catch it and fall back to OTP — an uncaught
-     *   [ActivityNotFoundException] would otherwise crash the caller.
+     * @throws AkedlyPasskeyException if no browser can open the Custom Tab ceremony URL. Catch it
+     *   and fall back to OTP — an uncaught [ActivityNotFoundException] would otherwise crash the
+     *   caller.
      */
     @JvmStatic
     @JvmOverloads
@@ -92,13 +92,13 @@ object AkedlyPasskey {
         callbackScheme: String,
         ceremonyOrigin: String = DEFAULT_ORIGIN
     ) {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(buildUrl(token, callbackScheme, ceremonyOrigin)))
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val customTab = CustomTabsIntent.Builder().build()
+        customTab.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
-            context.startActivity(intent)
+            customTab.launchUrl(context, Uri.parse(buildUrl(token, callbackScheme, ceremonyOrigin)))
         } catch (e: ActivityNotFoundException) {
             throw AkedlyPasskeyException(
-                "No browser or ACTION_VIEW handler is available to open the passkey ceremony; " +
+                "No browser is available to open the passkey ceremony in a Custom Tab; " +
                     "fall back to OTP.",
                 e
             )

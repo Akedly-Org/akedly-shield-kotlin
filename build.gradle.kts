@@ -38,6 +38,7 @@ dependencies {
     // bundles -core). The undeclared coroutines import + the missing Android classpath are the
     // two gaps that broke the build on the old kotlin("jvm") module.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("androidx.browser:browser:1.7.0")
 
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
