@@ -74,19 +74,38 @@ class PasskeyTest {
     }
 
     @Test
-    fun testRepeatedParamKeepsLastOccurrence() {
-        // Documents current behavior: on a duplicated key the last occurrence wins.
-        val r = AkedlyPasskey.parseResultFromQuery(
-            "purpose=auth&purpose=enroll&verified=true&resultToken=pkrt1.a.b"
+    fun testDuplicateReservedResultParamsFailClosed() {
+        val vectors = listOf(
+            "type" to "AKEDLY_PASSKEY_RESULT",
+            "purpose" to "auth",
+            "verified" to "true",
+            "transactionId" to "tx_9",
+            "code" to "ineligible",
+            "resultToken" to "pkrt1.a.b"
         )
-        assertTrue(r.verified)
-        assertEquals("enroll", r.purpose)
+        val baseQuery = vectors.joinToString("&") { (name, value) -> "$name=$value" }
+        for ((name, value) in vectors) {
+            val r = AkedlyPasskey.parseResultFromQuery("$baseQuery&$name=$value")
+            assertFalse(r.verified, "duplicate $name must fail closed")
+            assertNull(r.resultToken)
+            assertEquals("failed", r.reason)
+        }
     }
 
     @Test
     fun testValuelessKeyIsAFailedResultNotACrash() {
         val r = AkedlyPasskey.parseResultFromQuery("?verified")
         assertFalse(r.verified)
+        assertEquals("failed", r.reason)
+    }
+
+    @Test
+    fun testValuelessDuplicateReservedParamFailsClosed() {
+        val r = AkedlyPasskey.parseResultFromQuery(
+            "verified=true&resultToken=pkrt1.a.b&verified"
+        )
+        assertFalse(r.verified)
+        assertNull(r.resultToken)
         assertEquals("failed", r.reason)
     }
 
