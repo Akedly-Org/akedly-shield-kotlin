@@ -80,6 +80,11 @@ What must be preserved when touching `launch()`:
 
 - **The `ActivityNotFoundException → AkedlyPasskeyException` fallback.** A device with no browser
   must fail cleanly so the caller falls back to OTP, not crash.
+- **`androidx.browser` stays at `implementation` scope in `build.gradle.kts:41` — never `compileOnly`.**
+  `compileOnly` drops it at runtime, so `CustomTabsIntent.Builder()` (`Passkey.kt:105`, built *outside*
+  the `try`) throws `NoClassDefFoundError`. That is an `Error`, so the `ActivityNotFoundException` catch
+  above would not intercept it even if it were inside the block — the promised typed failure becomes an
+  unhandled crash, and the OTP fallback never runs.
 - **The akedly.io-origin / no-WebView rule.** Platform passkeys do not work in a `WebView`.
 - **`buildUrl` and `parseResult` do not change** — they are the pure, JVM-testable half.
 - **The cancellation contract**, which is the one real behavioural difference from iOS (where

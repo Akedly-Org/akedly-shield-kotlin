@@ -12,6 +12,27 @@ dependencies {
 }
 ```
 
+#### Full Guava consumers
+
+`androidx.browser` transitively includes `com.google.guava:listenablefuture:1.0`, which duplicates
+`ListenableFuture` against full Guava. **Guava ≥ 27 resolves this for you** — it depends on the empty
+`listenablefuture:9999.0-empty-to-avoid-conflict-with-guava` artifact, which Gradle's highest-version
+resolution selects. You only need the rule below on **Guava &lt; 27 on the standard
+`com.google.guava:guava` coordinate** — that is exactly what it targets. A *shaded* Guava relocates
+`ListenableFuture`, so it never conflicts and needs nothing. A Guava repackaged onto a **different**
+coordinate is not covered either: point `replacedBy` at that coordinate instead, or the rule will
+resolve the duplicate by pulling in official Guava you did not ask for.
+
+```kotlin
+dependencies {
+    modules {
+        module("com.google.guava:listenablefuture") {
+            replacedBy("com.google.guava:guava", "listenablefuture is part of guava")
+        }
+    }
+}
+```
+
 ## Quick Start
 
 ```kotlin
@@ -113,8 +134,10 @@ import com.akedly.shield.AkedlyPasskey
 import com.akedly.shield.AkedlyPasskeyException
 
 // 1. Your backend clears the gate + starts the ceremony:
-//    POST /api/v1.2/transactions/passkey/auth-options  -> { data: { ceremonyToken } }
-val ceremonyToken = myBackend.startPasskeyAuth(phone)   // or a "no passkey" code -> use OTP
+//    POST /api/v1.2/transactions/passkey/auth-options
+//      { …, "returnTarget": { "url": "myapp://akedly-passkey" } }  // <-- REQUIRED for the resultToken
+//    -> { data: { ceremonyToken } }
+val ceremonyToken = myBackend.startPasskeyAuth(phone)   // or 404 NO_PASSKEY -> use OTP
 
 // 2. Launch it. The result returns to your redirect Activity (below).
 //    launch() throws AkedlyPasskeyException if the device has no browser to open the ceremony.
@@ -148,7 +171,9 @@ class PasskeyRedirectActivity : Activity() {
         val data = intent?.data ?: run { finish(); return }
         val result = AkedlyPasskey.parseResult(data)
         if (result.verified) {
-            // 3. Confirm offline on YOUR backend (no polling, no callback) — see below.
+            // 3. Confirm offline on YOUR backend — no polling needed. (Akedly also fires the
+            //    pipeline's backend callback if configured; it is unsigned, so the resultToken
+            //    is the proof.)
             myBackend.completeSignIn(result.resultToken!!)
         } else {
             // result.reason: "no_proof" | "failed" -> OTP fallback
@@ -350,9 +375,14 @@ https://auth.akedly.io/pk?token=<ceremonyToken>&returnUrl=myapp://akedly-passkey
 ```
 
 `AkedlyPasskey.buildUrl(...)` and `AkedlyPasskey.parseResult(uri)` / `parseResultFromQuery(query)`
-are public if you want them without the launcher. For production, prefer signing the
-`returnTarget` into the ceremony token server-side via `/auth-options` over the `returnUrl`
-query param.
+are public if you want them without the launcher.
+
+> ⚠️ **The `returnUrl` query param selects the redirect; it does NOT authorize the proof.** A
+> query-supplied target is always untrusted, so the redirect arrives **without** a `resultToken` and
+> this SDK reports `verified: false` / `no_proof` — even on a fully successful ceremony. To get the
+> proof your backend must sign a `returnTarget` into the ceremony token via `/auth-options` (or
+> `/verify` when enrolling). Omit it and you must reconcile against the pipeline's backend callback
+> instead.
 
 ## Related Packages
 
