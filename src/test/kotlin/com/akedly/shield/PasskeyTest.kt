@@ -110,6 +110,16 @@ class PasskeyTest {
     }
 
     @Test
+    fun testMalformedReservedValueFailsTheWholeResult() {
+        val r = AkedlyPasskey.parseResultFromQuery(
+            "verified=true&resultToken=pkrt1.a.b&code=%"
+        )
+        assertFalse(r.verified)
+        assertNull(r.resultToken)
+        assertEquals("failed", r.reason)
+    }
+
+    @Test
     fun testBlankParamsNormalizeToNull() {
         // The gateway emits purpose/transactionId as empty strings when unknown — surface null.
         val r = AkedlyPasskey.parseResultFromQuery(

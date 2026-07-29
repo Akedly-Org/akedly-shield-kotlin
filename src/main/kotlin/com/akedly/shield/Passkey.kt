@@ -17,7 +17,8 @@ import java.net.URLEncoder
  * your Akedly API key — no polling, no server-to-server callback to Akedly. See the README.
  */
 data class AkedlyPasskeyResult(
-    /** True only on a completed, server-verified ceremony. */
+    /** True only when the relay claims completion and includes a nonblank result token.
+     * The app must still send that token to its backend for HMAC and transaction verification. */
     val verified: Boolean,
     /** "auth" | "enroll" (null when the page reports it blank or not at all). */
     val purpose: String?,
@@ -117,24 +118,13 @@ object AkedlyPasskey {
 
     /** Parse the deep-link redirect `Uri` your Activity received into a result. */
     @JvmStatic
-    fun parseResult(uri: Uri): AkedlyPasskeyResult = try {
-        if (RESERVED_RESULT_PARAMS.any { uri.getQueryParameters(it).size > 1 }) {
-            failedResult()
-        } else {
-            build(
-                verifiedRaw = uri.getQueryParameter("verified") == "true",
-                purpose = uri.getQueryParameter("purpose"),
-                transactionId = uri.getQueryParameter("transactionId"),
-                resultToken = uri.getQueryParameter("resultToken"),
-                code = uri.getQueryParameter("code")
-            )
+    fun parseResult(uri: Uri): AkedlyPasskeyResult {
+        val encodedQuery = try {
+            uri.encodedQuery
+        } catch (e: Exception) {
+            null
         }
-    } catch (e: Exception) {
-        // Uri.getQueryParameter throws on an opaque (non-hierarchical) Uri — e.g. a hostile
-        // explicit intent carrying `myapp:akedly-passkey?verified=true`. This is a public parser
-        // fed external redirect input, so report a failed result rather than crash, mirroring
-        // parseResultFromQuery.
-        failedResult()
+        return encodedQuery?.let(::parseResultFromQuery) ?: failedResult()
     }
 
     /**
@@ -148,15 +138,15 @@ object AkedlyPasskey {
             if (pair.isEmpty()) continue
             val i = pair.indexOf('=')
             // URLDecoder.decode throws on malformed percent-encoding (e.g. `verified=%`). This is a
-            // public parser fed external redirect input, so skip a bad pair rather than crash — a
-            // missing `verified` then yields verified=false (a failed result), never an exception.
+            // public parser fed external redirect input, so fail the entire result rather than
+            // accept a partial callback or crash.
             val rawKey = if (i < 0) pair else pair.substring(0, i)
-            val k = try { URLDecoder.decode(rawKey, "UTF-8") } catch (e: Exception) { continue }
+            val k = decode(rawKey) ?: return failedResult()
             if (k in RESERVED_RESULT_PARAMS && params.containsKey(k)) {
                 return failedResult()
             }
             val rawValue = if (i < 0) "" else pair.substring(i + 1)
-            val v = try { URLDecoder.decode(rawValue, "UTF-8") } catch (e: Exception) { continue }
+            val v = decode(rawValue) ?: return failedResult()
             params[k] = v
         }
         return build(
@@ -201,6 +191,9 @@ object AkedlyPasskey {
             resultToken = null,
             code = null
         )
+
+    private fun decode(value: String): String? =
+        runCatching { URLDecoder.decode(value, "UTF-8") }.getOrNull()
 
     private val RESERVED_RESULT_PARAMS =
         setOf("type", "purpose", "verified", "transactionId", "code", "resultToken")

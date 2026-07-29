@@ -110,10 +110,9 @@ raising confidence, but **not a compile, and it must never be relayed as one.**
 
 ## Gotchas
 
-- `Uri.getQueryParameter` throws on an opaque (non-hierarchical) `Uri` — e.g. a hostile explicit
-  intent carrying `myapp:akedly-passkey?verified=true`. `parseResult` already catches this and
-  degrades to a failed result. Do not "simplify" the try/catch away.
+- An opaque (non-hierarchical) `Uri` may not expose an encoded query. `parseResult` delegates every
+  available encoded query to the same strict raw parser and otherwise degrades to a failed result.
 - `URLDecoder.decode` throws on malformed percent-encoding (`verified=%`). `parseResultFromQuery`
-  skips the bad pair rather than throwing; a missing `verified` then yields `verified=false`.
+  fails the entire result rather than accepting a partial callback or throwing.
 - The ceremony must run on the **akedly.io origin** in the system browser, so platform passkeys
   (Credential Manager) work. Never move it into a WebView — passkeys will not work there.
