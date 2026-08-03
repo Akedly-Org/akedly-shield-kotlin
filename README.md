@@ -8,7 +8,7 @@ Client-side PoW solver, Turnstile helper, and passkey launcher for Akedly Shield
 
 ```kotlin
 dependencies {
-    implementation("com.akedly:shield:1.0.0")
+    implementation("com.akedly:shield:1.1.0")
 }
 ```
 
@@ -183,6 +183,27 @@ class PasskeyRedirectActivity : Activity() {
 }
 ```
 
+> ⚠️ **Android custom schemes are first-come-first-served — another installed app can register
+> `myapp://` too.** Unlike iOS `ASWebAuthenticationSession`, which captures the callback inside the
+> calling process, a Custom Tab redirect goes through the OS. If a second app declares the same
+> `<data android:scheme="myapp" />`, Android shows a chooser or silently routes to it, and that app
+> receives the callback URL — including the `resultToken` — instead of yours. The three SDKs differ
+> here on purpose: **this is a real exposure on Android and is not one on iOS.**
+>
+> What actually contains it:
+> - **The token is short-lived (2 min) and, if you follow the verification steps above, single-use
+>   and bound to a `transactionId` your backend started** — so an intercepted token is only useful
+>   to an attacker racing your own legitimate sign-in for the same transaction.
+> - **Pick a scheme nobody else will claim.** Use a reverse-DNS scheme derived from your package
+>   (`com.example.myapp://akedly-passkey`), never a short generic one like `myapp://` or `auth://`.
+> - Treat `resultToken` as a bearer credential the whole way home: never log the callback `Uri`.
+>
+> **Known limitation:** Android App Links (a `https://` callback verified by Digital Asset Links)
+> cannot be squatted and would close this properly, but `buildUrl` currently composes the return
+> target as `"<callbackScheme>://akedly-passkey"`, so it can only express a custom scheme. Accepting
+> a full callback URL is an API change, tracked for a follow-up release. Until then, a reverse-DNS
+> scheme plus the single-use/transaction binding above is the mitigation.
+
 To **enroll** a passkey, pass the `enrollmentToken` from a successful OTP `/verify` as the
 token instead — same API; enrollment is proven on the next successful sign-in.
 
@@ -202,9 +223,22 @@ server-to-server callback to Akedly. The token is HMAC-signed with **your accoun
 same secret you already use to create transactions), so only your backend — which holds that key
 — can verify it.
 
-> ⚠️ **Verify on your server, never in the app.** Your API key is a server secret. Do **not**
-> embed it in the Android app or verify the token on-device. The app forwards `result.resultToken`
-> to your backend; your backend verifies it and creates the session.
+> ⚠️ **Verify on your server, never in the app.** The app forwards `result.resultToken` to your
+> backend; your backend verifies it and creates the session. Verifying on-device proves nothing —
+> the device is what you are trying to authenticate.
+>
+> 🛑 **This only works if your API key is not in your app — and the OTP example above puts it
+> there.** The proof is an HMAC under your account API key, so *anyone who holds that key can mint
+> a `verified = true` token for any transaction*. The integration example above sends `apiKey`
+> straight from the device, which ships it in your APK where it is trivially extracted. If you do
+> both, a user who pulls the key out of your app can enter a victim's phone number, let your
+> backend start the transaction, forge a proof for it, and be signed in as that victim.
+>
+> Pick one:
+> - **Route the V1.2 OTP calls through your own backend** so the key never ships in the app
+>   (recommended — the passkey `auth-options` call above is already server-side for this reason), or
+> - **Don't use offline verification.** Confirm the outcome server-to-server with `GET /result`
+>   instead, and treat `resultToken` as a UX-only signal.
 
 **Token format**
 
@@ -240,14 +274,27 @@ signature = HMAC_SHA256( key = YOUR_API_KEY, message = "pkrt1." + base64url(payl
 1. Reject if `token` doesn't start with `pkrt1.`.
 2. Strip the `pkrt1.` prefix, then split the remainder on `.` — there must be **exactly
    two** segments, `dataSegment` and `sigSegment` (reject otherwise).
-3. Compute `expected = HMAC_SHA256(apiKey, "pkrt1." + dataSegment)`.
-4. **Constant-time-compare** `expected` against `base64url-decode(sigSegment)`. Reject on
+3. Require both segments to be **canonical** unpadded base64url: only `[A-Za-z0-9_-]`, and
+   `base64url-encode(base64url-decode(segment))` must reproduce the segment exactly. Base64's
+   slack bits in the final character mean several strings decode to the same bytes, so without
+   this one proof has several spellings and a string-keyed single-use check can be bypassed.
+   (Both reference verifiers below already do this — the step list had omitted it.)
+4. Compute `expected = HMAC_SHA256(apiKey, "pkrt1." + dataSegment)`.
+5. **Constant-time-compare** `expected` against `base64url-decode(sigSegment)`. Reject on
    mismatch (forged / tampered).
-5. `payload = JSON(base64url-decode(dataSegment))`.
-6. Reject if `now_ms > payload.exp` (expired).
-7. Require `payload.verified == true`.
-8. Require `payload.transactionId ==` the transaction **you** started — this binds the proof to
-   *this* sign-in. Only then create the session.
+6. `payload = JSON(base64url-decode(dataSegment))`.
+7. Reject if `now_ms > payload.exp` (expired).
+8. Require `payload.verified == true`.
+9. Require `payload.transactionId ==` the transaction **you** started, and `payload.pipelineId ==`
+   your pipeline — this binds the proof to *this* sign-in.
+10. Require `payload.purpose == "auth"`. An `"enroll"` proof says a passkey was **registered**,
+    not that the holder authenticated — accepting one as a sign-in lets anyone who can enroll a
+    passkey log in as the account it was enrolled against.
+11. **Consume the token once.** Record the `transactionId` (or the whole token) as spent and reject
+    a repeat. The signature stays valid for its full 2-minute life, so without this a token
+    observed in a redirect URL, a referrer, or a log can be replayed.
+
+Only after all eleven do you create the session.
 
 **Reference verifier — Node.js** (zero deps; portable to any backend language):
 

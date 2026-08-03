@@ -5,7 +5,11 @@ plugins {
 }
 
 group = "com.akedly"
-version = "1.0.0"
+// 1.1.0, not 1.0.0: this release adds the whole `AkedlyPasskey` surface (launch / buildUrl /
+// parseResult / parseResultFromQuery). Additive, so a minor bump — and it matches
+// akedly-shield-dart 1.1.0, which shipped the same feature. Publishing new public API under an
+// unchanged coordinate leaves consumers no way to ask for the version that has it.
+version = "1.1.0"
 
 android {
     namespace = "com.akedly.shield"

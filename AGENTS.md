@@ -51,7 +51,7 @@ multi-slash value behaves differently per platform. It fails visibly — the cer
 is a documented input contract, not a code divergence to "fix".
 
 1. **A verified result MUST carry a `resultToken`.** `verified = verifiedRaw && !resultToken.isNullOrBlank()`
-   (`Passkey.kt:177`). A bare `?verified=true` with no token is reported `verified = false`,
+   (in `AkedlyPasskeyCeremony.parseResult`'s field mapping). A bare `?verified=true` with no token is reported `verified = false`,
    `reason = "no_proof"` — never as a trusted success. **Fail closed. This is the whole security
    property of the relayed result** — the redirect arrives over a custom scheme any local app can
    forge, so the token is the only real proof.
@@ -69,7 +69,7 @@ is a documented input contract, not a code divergence to "fix".
 
 ## Custom Tabs — ✅ SHIPPED in `da7ece7` (OI-G closed). Preserve these constraints.
 
-`AkedlyPasskey.launch()` uses `CustomTabsIntent` (`Passkey.kt:105`) and the module declares
+`AkedlyPasskey.launch()` uses `CustomTabsIntent` and the module declares
 `androidx.browser:browser:1.7.0`. **An earlier version of this section said the opposite** — that
 the launcher was still a plain `Intent.ACTION_VIEW` and `androidx.browser` was undeclared, and it
 ordered a KDoc update that had already happened. Both claims were false at `da7ece7`. Codex reads
@@ -80,9 +80,9 @@ What must be preserved when touching `launch()`:
 
 - **The `ActivityNotFoundException → AkedlyPasskeyException` fallback.** A device with no browser
   must fail cleanly so the caller falls back to OTP, not crash.
-- **`androidx.browser` stays at `implementation` scope in `build.gradle.kts:41` — never `compileOnly`.**
-  `compileOnly` drops it at runtime, so `CustomTabsIntent.Builder()` (`Passkey.kt:105`, built *outside*
-  the `try`) throws `NoClassDefFoundError`. That is an `Error`, so the `ActivityNotFoundException` catch
+- **`androidx.browser` stays at `implementation` scope in `build.gradle.kts` — never `compileOnly`.**
+  `compileOnly` drops it at runtime, so `CustomTabsIntent.Builder()` (built *outside*
+  the `try` in `launch()`) throws `NoClassDefFoundError`. That is an `Error`, so the `ActivityNotFoundException` catch
   above would not intercept it even if it were inside the block — the promised typed failure becomes an
   unhandled crash, and the OTP fallback never runs.
 - **The akedly.io-origin / no-WebView rule.** Platform passkeys do not work in a `WebView`.
@@ -90,11 +90,11 @@ What must be preserved when touching `launch()`:
 - **The cancellation contract**, which is the one real behavioural difference from iOS (where
   `ASWebAuthenticationSession` *does* report a cancel). Get the detection point right: **the signal
   lives on the CALLING Activity, not the redirect Activity.** The redirect Activity only exists
-  *because* a redirect arrived (README:133 makes it `singleTask`), so on abandonment it is never
+  *because* a redirect arrived (the README's manifest snippet makes it `singleTask`), so on abandonment it is never
   instantiated and watching its lifecycle detects nothing — the user waits forever with no OTP
-  fallback. Detect a still-set "in flight" flag on the calling Activity's `onResume`. The KDoc at
-  `Passkey.kt:76-87` says this correctly; keep the two in step.
-- **`FLAG_ACTIVITY_NEW_TASK` is conditional on purpose** (`Passkey.kt:106`, added at triage after the
+  fallback. Detect a still-set "in flight" flag on the calling Activity's `onResume`. The KDoc on `launch()`
+  says this correctly; keep the two in step.
+- **`FLAG_ACTIVITY_NEW_TASK` is conditional on purpose** (in `launch()`, added at triage after the
   S3 review): an `Activity` context opens the tab *inside* the caller's task, which is the whole
   point of Custom Tabs. Adding the flag unconditionally launches a separate task — API-shaped like a
   Custom Tab, UX-shaped like the old browser kick-out. Non-Activity contexts still get the flag,
