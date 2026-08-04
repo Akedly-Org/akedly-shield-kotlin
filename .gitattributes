@@ -1,0 +1,6 @@
+# Keep the Gradle wrapper working on every platform after a fresh clone.
+# gradlew is a POSIX shell script (must stay LF); gradlew.bat is a Windows batch file
+# (must be CRLF); the wrapper jar is binary and must never be line-ending-normalized.
+gradlew        text eol=lf
+gradlew.bat    text eol=crlf
+*.jar          binary

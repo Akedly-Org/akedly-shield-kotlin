@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Library manifest. The namespace lives in build.gradle.kts (android.namespace); a library
+     declares no components of its own — the consuming app registers the passkey redirect Activity
+     (see README "Handle the redirect"). INTERNET is declared HERE (not left to the consumer) so the
+     Turnstile WebView (Turnstile.kt loads https://turnstile.akedly.io) works even if the host app
+     didn't declare it — a library <uses-permission> merges into the consuming app's manifest. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

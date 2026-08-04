@@ -1,6 +1,6 @@
 # AkedlyShield (Kotlin)
 
-Client-side PoW solver and Turnstile helper for Akedly Shield V1.2 (Android/JVM).
+Client-side PoW solver, Turnstile helper, and passkey launcher for Akedly Shield V1.2 (Android). Published as an Android library (AAR): the Turnstile helper needs a `WebView` and the passkey launcher needs `Intent`/`Uri`, so the artifact targets Android, not a plain JVM. The PoW solver itself is pure Kotlin — copy it into a JVM/server project if you need server-side solving.
 
 ## Installation
 
@@ -8,7 +8,28 @@ Client-side PoW solver and Turnstile helper for Akedly Shield V1.2 (Android/JVM)
 
 ```kotlin
 dependencies {
-    implementation("com.akedly:shield:1.0.0")
+    implementation("com.akedly:shield:1.1.0")
+}
+```
+
+#### Full Guava consumers
+
+`androidx.browser` transitively includes `com.google.guava:listenablefuture:1.0`, which duplicates
+`ListenableFuture` against full Guava. **Guava ≥ 27 resolves this for you** — it depends on the empty
+`listenablefuture:9999.0-empty-to-avoid-conflict-with-guava` artifact, which Gradle's highest-version
+resolution selects. You only need the rule below on **Guava &lt; 27 on the standard
+`com.google.guava:guava` coordinate** — that is exactly what it targets. A *shaded* Guava relocates
+`ListenableFuture`, so it never conflicts and needs nothing. A Guava repackaged onto a **different**
+coordinate is not covered either: point `replacedBy` at that coordinate instead, or the rule will
+resolve the duplicate by pulling in official Guava you did not ask for.
+
+```kotlin
+dependencies {
+    modules {
+        module("com.google.guava:listenablefuture") {
+            replacedBy("com.google.guava:guava", "listenablefuture is part of guava")
+        }
+    }
 }
 ```
 
@@ -100,6 +121,315 @@ suspend fun sendOTP(phone: String, apiKey: String, pipelineID: String, context: 
 hash = SHA256(challenge + ":" + nonce.toString())   // hex digest
 valid = hash.startsWith("0".repeat(difficulty))      // leading hex zeros
 ```
+
+## Passkeys (V1.2)
+
+Run a hosted V1.2 passkey ceremony on `auth.akedly.io/pk` from an Android app. The shipped
+launcher opens a **browser-backed Custom Tab** on the akedly.io origin — so platform passkeys
+(fingerprint / face / device PIN via Credential Manager) work — and returns via a **deep link**
+to your app's custom scheme. **No WebView, no Digital Asset Links.**
+
+```kotlin
+import com.akedly.shield.AkedlyPasskey
+import com.akedly.shield.AkedlyPasskeyException
+
+// 1. Your backend clears the gate + starts the ceremony:
+//    POST /api/v1.2/transactions/passkey/auth-options
+//      { …, "returnTarget": { "url": "myapp://akedly-passkey" } }  // <-- REQUIRED for the resultToken
+//    -> { data: { ceremonyToken } }
+val ceremonyToken = myBackend.startPasskeyAuth(phone)   // or 404 NO_PASSKEY -> use OTP
+
+// 2. Launch it. The result returns to your redirect Activity (below).
+//    launch() throws AkedlyPasskeyException if the device has no browser to open the ceremony.
+try {
+    AkedlyPasskey.launch(context, ceremonyToken, callbackScheme = "myapp")
+    // for QA: AkedlyPasskey.launch(context, token, "myapp", ceremonyOrigin = "http://localhost:5174")
+} catch (e: AkedlyPasskeyException) {
+    // no browser available on the device -> fall back to OTP
+}
+```
+
+Register a tiny redirect `Activity` for the scheme, and parse the result:
+
+```xml
+<!-- AndroidManifest.xml -->
+<activity android:name=".PasskeyRedirectActivity" android:exported="true" android:launchMode="singleTask">
+  <intent-filter>
+    <action android:name="android.intent.action.VIEW" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <category android:name="android.intent.category.BROWSABLE" />
+    <data android:scheme="myapp" android:host="akedly-passkey" />
+  </intent-filter>
+</activity>
+```
+
+```kotlin
+class PasskeyRedirectActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // A third party can target this exported Activity with no data — bail out, don't NPE.
+        val data = intent?.data ?: run { finish(); return }
+        val result = AkedlyPasskey.parseResult(data)
+        if (result.verified) {
+            // 3. Confirm offline on YOUR backend — no polling needed. (Akedly also fires the
+            //    pipeline's backend callback if configured; it is unsigned, so the resultToken
+            //    is the proof.)
+            myBackend.completeSignIn(result.resultToken!!)
+        } else {
+            // result.reason: "no_proof" | "failed" -> OTP fallback
+        }
+        finish()
+    }
+}
+```
+
+> ⚠️ **Android custom schemes are first-come-first-served — another installed app can register
+> `myapp://` too.** Unlike iOS `ASWebAuthenticationSession`, which captures the callback inside the
+> calling process, a Custom Tab redirect goes through the OS. If a second app declares the same
+> `<data android:scheme="myapp" />`, Android shows a chooser or silently routes to it, and that app
+> receives the callback URL — including the `resultToken` — instead of yours. The three SDKs differ
+> here on purpose: **this is a real exposure on Android and is not one on iOS.**
+>
+> What actually contains it:
+> - **The token is short-lived (2 min) and, if you follow the verification steps above, single-use
+>   and bound to a `transactionId` your backend started** — so an intercepted token is only useful
+>   to an attacker racing your own legitimate sign-in for the same transaction.
+> - **Pick a scheme nobody else will claim.** Use a reverse-DNS scheme derived from your package
+>   (`com.example.myapp://akedly-passkey`), never a short generic one like `myapp://` or `auth://`.
+> - Treat `resultToken` as a bearer credential the whole way home: never log the callback `Uri`.
+>
+> **Known limitation:** Android App Links (a `https://` callback verified by Digital Asset Links)
+> cannot be squatted and would close this properly, but `buildUrl` currently composes the return
+> target as `"<callbackScheme>://akedly-passkey"`, so it can only express a custom scheme. Accepting
+> a full callback URL is an API change, tracked for a follow-up release. Until then, a reverse-DNS
+> scheme plus the single-use/transaction binding above is the mitigation.
+
+To **enroll** a passkey, pass the `enrollmentToken` from a successful OTP `/verify` as the
+token instead — same API; enrollment is proven on the next successful sign-in.
+
+> ⚠️ **Enrollment's result is unproven unless you ask for the proof.** The hosted page relays a
+> `resultToken` only to a **server-signed** return target, and the enrollment token carries one only
+> if your backend passed `returnTarget` to `/verify` (e.g. `{ "url": "myapp://akedly-passkey" }`).
+> Omit it and enrollment still succeeds — the passkey is created and works — but this SDK reports
+> `verified: false` / `no_proof`, because it refuses to call an unproven result verified. So either
+> pass `returnTarget` at `/verify`, or treat the enroll result as advisory and let the next
+> successful sign-in be the proof. Do not gate your "passkey enabled" UI on the enroll result alone.
+
+### Verify the result (seamless — no polling)
+
+A verified ceremony carries a **`resultToken`**: a compact, signed proof of the outcome. You
+confirm a sign-in by verifying it **offline on your own backend** — no `/result` poll, no
+server-to-server callback to Akedly. The token is HMAC-signed with **your account API key** (the
+same secret you already use to create transactions), so only your backend — which holds that key
+— can verify it.
+
+> ⚠️ **Verify on your server, never in the app.** The app forwards `result.resultToken` to your
+> backend; your backend verifies it and creates the session. Verifying on-device proves nothing —
+> the device is what you are trying to authenticate.
+>
+> 🛑 **This only works if your API key is not in your app — and the OTP example above puts it
+> there.** The proof is an HMAC under your account API key, so *anyone who holds that key can mint
+> a `verified = true` token for any transaction*. The integration example above sends `apiKey`
+> straight from the device, which ships it in your APK where it is trivially extracted. If you do
+> both, a user who pulls the key out of your app can enter a victim's phone number, let your
+> backend start the transaction, forge a proof for it, and be signed in as that victim.
+>
+> Pick one:
+> - **Route the V1.2 OTP calls through your own backend** so the key never ships in the app
+>   (recommended — the passkey `auth-options` call above is already server-side for this reason), or
+> - **Don't use offline verification.** Confirm the outcome server-to-server with `GET /result`
+>   instead, and treat `resultToken` as a UX-only signal.
+
+**Token format**
+
+```
+pkrt1.<base64url(payloadJSON)>.<base64url(signature)>
+```
+
+`payloadJSON` (a JSON object, before base64url):
+
+```json
+{ "v": 1, "purpose": "auth", "transactionId": "…", "pipelineId": "…",
+  "verified": true, "iat": 1730000000000, "exp": 1730000120000 }
+```
+
+`iat`/`exp` are **milliseconds** since the Unix epoch (`exp` ≈ 2 minutes after `iat`).
+
+**The signature — exactly what is HMAC'd, in this order**
+
+```
+signature = HMAC_SHA256( key = YOUR_API_KEY, message = "pkrt1." + base64url(payloadJSON) )
+```
+
+- **algorithm:** HMAC-SHA256.
+- **key:** your account API key, as raw UTF-8 bytes.
+- **message:** the ASCII string `"pkrt1."` immediately followed by the base64url payload segment
+  — i.e. **the whole token with the trailing `.<signature>` removed**. The `pkrt1.` prefix **is
+  part of the signed bytes**. (Equivalently: `token` up to, but not including, the final `.`.)
+- **base64url is unpadded** (RFC 4648 §5: `+`→`-`, `/`→`_`, `=` stripped). Java's
+  `Base64.getUrlDecoder()` accepts unpadded input as-is.
+
+**Verification steps (do them all, in order)**
+
+1. Reject if `token` doesn't start with `pkrt1.`.
+2. Strip the `pkrt1.` prefix, then split the remainder on `.` — there must be **exactly
+   two** segments, `dataSegment` and `sigSegment` (reject otherwise).
+3. Require both segments to be **canonical** unpadded base64url: only `[A-Za-z0-9_-]`, and
+   `base64url-encode(base64url-decode(segment))` must reproduce the segment exactly. Base64's
+   slack bits in the final character mean several strings decode to the same bytes, so without
+   this one proof has several spellings and a string-keyed single-use check can be bypassed.
+   (Both reference verifiers below already do this — the step list had omitted it.)
+4. Compute `expected = HMAC_SHA256(apiKey, "pkrt1." + dataSegment)`.
+5. **Constant-time-compare** `expected` against `base64url-decode(sigSegment)`. Reject on
+   mismatch (forged / tampered).
+6. `payload = JSON(base64url-decode(dataSegment))`.
+7. Reject if `now_ms > payload.exp` (expired).
+8. Require `payload.verified == true`.
+9. Require `payload.transactionId ==` the transaction **you** started, and `payload.pipelineId ==`
+   your pipeline — this binds the proof to *this* sign-in.
+10. Require `payload.purpose == "auth"`. An `"enroll"` proof says a passkey was **registered**,
+    not that the holder authenticated — accepting one as a sign-in lets anyone who can enroll a
+    passkey log in as the account it was enrolled against.
+11. **Consume the token once.** Record the `transactionId` (or the whole token) as spent and reject
+    a repeat. The signature stays valid for its full 2-minute life, so without this a token
+    observed in a redirect URL, a referrer, or a log can be replayed.
+
+Only after all eleven do you create the session.
+
+**Reference verifier — Node.js** (zero deps; portable to any backend language):
+
+```javascript
+import crypto from 'node:crypto';
+
+export function verifyAkedlyResult(token, apiKey) {
+  if (!apiKey) return null;                                       // fail closed on an empty key
+  if (typeof token !== 'string' || !token.startsWith('pkrt1.')) return null;
+  const parts = token.slice('pkrt1.'.length).split('.');
+  if (parts.length !== 2) return null;                              // exactly two segments
+  const [data, sig] = parts;
+  const b64u = /^[A-Za-z0-9_-]+$/;                                  // strict unpadded base64url
+  if (!b64u.test(data) || !b64u.test(sig)) return null;            // no alternate serializations
+  // string-keyed single-use checks must see one canonical serialization
+  if (Buffer.from(data, 'base64url').toString('base64url') !== data ||
+      Buffer.from(sig, 'base64url').toString('base64url') !== sig) return null;
+  const expected = crypto.createHmac('sha256', apiKey).update('pkrt1.' + data).digest();
+  const given = Buffer.from(sig, 'base64url');
+  if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) return null;
+  let payload;
+  try { payload = JSON.parse(Buffer.from(data, 'base64url').toString()); } catch { return null; }
+  if (!payload.exp || Date.now() > payload.exp) return null;        // expired
+  if (payload.verified !== true) return null;                       // only a verified outcome is trustworthy
+  return payload; // verified + unexpired — the caller MUST still bind payload.transactionId to the ceremony it started
+}
+```
+
+**Reference verifier — server-side Kotlin / JVM** (standard library + any JSON parser; this uses
+`org.json`):
+
+```kotlin
+import java.security.MessageDigest
+import java.util.Base64
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
+import org.json.JSONObject
+
+data class AkedlyClaim(
+    val verified: Boolean,
+    val purpose: String?,
+    val transactionId: String?,
+    val pipelineId: String?,
+    val exp: Long                      // milliseconds since epoch
+)
+
+fun verifyAkedlyResult(token: String, apiKey: String): AkedlyClaim? {
+    if (apiKey.isBlank()) return null                              // fail closed: never HMAC under an empty key
+    val prefix = "pkrt1."
+    if (!token.startsWith(prefix)) return null
+    val segments = token.substring(prefix.length).split(".")
+    if (segments.size != 2) return null                            // exactly two segments
+    val dataSegment = segments[0]
+    val sigSegment = segments[1]
+    // Strict, unpadded base64url on both segments — getUrlDecoder() also accepts the padded
+    // ("…=") spelling of the same 32-byte HMAC, i.e. an alternate serialization of one signed
+    // proof that could slip past a string-keyed replay check. Reject it up front.
+    val b64u = Regex("^[A-Za-z0-9_-]+$")
+    if (!b64u.matches(dataSegment) || !b64u.matches(sigSegment)) return null
+
+    val mac = Mac.getInstance("HmacSHA256")
+    mac.init(SecretKeySpec(apiKey.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+    val expected = mac.doFinal((prefix + dataSegment).toByteArray(Charsets.UTF_8))  // "pkrt1." + dataSegment
+
+    val urlDecoder = Base64.getUrlDecoder()
+    val urlEncoder = Base64.getUrlEncoder().withoutPadding()
+    val provided = try { urlDecoder.decode(sigSegment) } catch (e: Exception) { return null }
+    val dataBytes = try { urlDecoder.decode(dataSegment) } catch (e: Exception) { return null }
+    // string-keyed single-use checks must see one canonical serialization
+    if (urlEncoder.encodeToString(provided) != sigSegment ||
+        urlEncoder.encodeToString(dataBytes) != dataSegment) return null
+    if (!MessageDigest.isEqual(expected, provided)) return null     // constant-time
+
+    val payload = try {
+        JSONObject(String(dataBytes, Charsets.UTF_8))
+    } catch (e: Exception) { return null }
+    val exp = payload.optLong("exp", 0L)                           // 0 if missing/non-numeric (no throw)
+    if (exp <= 0L || System.currentTimeMillis() > exp) return null // missing/invalid or expired
+    return AkedlyClaim(
+        verified = payload.optBoolean("verified", false),
+        purpose = payload.optString("purpose").ifEmpty { null },
+        transactionId = payload.optString("transactionId").ifEmpty { null },
+        pipelineId = payload.optString("pipelineId").ifEmpty { null },
+        exp = exp
+    )
+}
+
+// On your sign-in route, after the app POSTs { resultToken }:
+//   val claim = verifyAkedlyResult(resultToken, AKEDLY_API_KEY)
+//   if (claim != null && claim.verified && claim.transactionId == expectedTxId) createSession(user)
+```
+
+Treat the token like a one-time auth code: short-lived (~2 min) and accepted once.
+
+### Local vs on-device testing
+
+The `ceremonyOrigin` decides which auth-gateway runs the WebAuthn ceremony — and therefore the
+relying-party (RP) ID the passkey binds to.
+
+- **Android Emulator (local).** Use a system image **with Google Play Services** and a
+  configured **screen lock** (PIN / pattern / biometric) — the platform authenticator
+  (Credential Manager) refuses to create passkeys without one. Pass
+  `ceremonyOrigin = "http://localhost:5174"` to run the ceremony on the local auth-gateway with
+  RP=`localhost` (accepted on the emulator). Because the emulator's `localhost` is the emulator
+  itself, tunnel the host with **`adb reverse tcp:5174 tcp:5174`** (and `tcp:4100` for your token
+  backend) so the ceremony origin stays `localhost`. Do **not** point `ceremonyOrigin` at the host
+  alias `10.0.2.2` — over plain HTTP it is not a trustworthy WebAuthn origin and would bind the
+  passkey to the wrong RP; `10.0.2.2` is fine for your token backend, but keep the ceremony on
+  `localhost`.
+- **Real device (prod).** Use the default `ceremonyOrigin` (`https://auth.akedly.io`,
+  RP=`akedly.io`) — a `localhost` RP cannot bind on a physical device.
+
+> There is a full end-to-end V1.2 sandbox — web plus all four mobile SDK reference apps, with a
+> headless Playwright + Chrome virtual-authenticator gate — for exercising this loop without a
+> physical device.
+
+### Without the SDK (open the page yourself)
+
+`AkedlyPasskey` is a thin wrapper. The ceremony is just a URL you open in a Custom Tab /
+browser; the result comes back on your deep-link scheme:
+
+```
+https://auth.akedly.io/pk?token=<ceremonyToken>&returnUrl=myapp://akedly-passkey
+   -> redirects to: myapp://akedly-passkey?verified=true&transactionId=…&resultToken=pkrt1.…
+```
+
+`AkedlyPasskey.buildUrl(...)` and `AkedlyPasskey.parseResult(uri)` / `parseResultFromQuery(query)`
+are public if you want them without the launcher.
+
+> ⚠️ **The `returnUrl` query param selects the redirect; it does NOT authorize the proof.** A
+> query-supplied target is always untrusted, so the redirect arrives **without** a `resultToken` and
+> this SDK reports `verified: false` / `no_proof` — even on a fully successful ceremony. To get the
+> proof your backend must sign a `returnTarget` into the ceremony token via `/auth-options` (or
+> `/verify` when enrolling). Omit it and you must reconcile against the pipeline's backend callback
+> instead.
 
 ## Related Packages
 
