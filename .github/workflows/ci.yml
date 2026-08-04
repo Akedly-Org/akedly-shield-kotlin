@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # AGP 8.2.2 requires JDK 17, and the module compiles to jvmTarget 17.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # assembleRelease is the variant `maven-publish` publishes, so this builds exactly
+      # what a JitPack consumer would receive.
+      - run: ./gradlew assembleRelease test --stacktrace
