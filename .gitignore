@@ -1,6 +1,7 @@
 # Gradle / Android build output
 .gradle/
 build/
+tmp/
 local.properties
 captures/
 .externalNativeBuild/
