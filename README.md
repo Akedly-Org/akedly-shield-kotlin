@@ -1,16 +1,37 @@
 # AkedlyShield (Kotlin)
 
-Client-side PoW solver, Turnstile helper, and passkey launcher for Akedly Shield V1.2 (Android). Published as an Android library (AAR): the Turnstile helper needs a `WebView` and the passkey launcher needs `Intent`/`Uri`, so the artifact targets Android, not a plain JVM. The PoW solver itself is pure Kotlin — copy it into a JVM/server project if you need server-side solving.
+Client-side PoW solver, Turnstile helper, and hosted/native passkey ceremonies for Akedly Shield
+V1.2 (Android). Published as an Android library (AAR): the Turnstile helper needs a `WebView`,
+the passkey APIs need Android framework types, and the artifact therefore targets Android rather
+than a plain JVM. The PoW solver itself is pure Kotlin — copy it into a JVM/server project if you
+need server-side solving.
 
 ## Installation
 
 ### Gradle
 
+Add JitPack to the repositories available to your project:
+
 ```kotlin
-dependencies {
-    implementation("com.akedly:shield:1.1.0")
+repositories {
+    google()
+    mavenCentral()
+    maven { url = uri("https://jitpack.io") }
 }
 ```
+
+```kotlin
+dependencies {
+    implementation("com.github.Akedly-Org:akedly-shield-kotlin:1.2.0")
+}
+```
+
+### Requirements
+
+The library keeps `minSdk = 24`. Every app depending on `1.2.0` requires `compileSdk` 35+, Android
+Gradle Plugin 8.6+, Kotlin 2.0+ for Kotlin consumers (the library emits Kotlin 2.1 metadata), and
+JDK 17, whichever APIs it uses. The library brings in AndroidX Credential Manager 1.6.0 and its
+Google Play Services auth/base dependencies.
 
 #### Full Guava consumers
 
@@ -123,6 +144,90 @@ valid = hash.startsWith("0".repeat(difficulty))      // leading hex zeros
 ```
 
 ## Passkeys (V1.2)
+
+The SDK supports a native Android ceremony through Credential Manager and a hosted fallback on
+`auth.akedly.io/pk`. Native calls never make network requests or carry an Akedly API key: your
+backend requests ceremony options and verifies the returned WebAuthn JSON.
+
+### Native Android passkeys
+
+Native passkeys require Android 9 (API 28) or newer. Android 9 through Android 13 require Google
+Play Services; Android 14 and newer can use the platform Credential Manager. Check support before
+starting a native ceremony and use the hosted flow below when it returns `false`.
+
+Your backend must include the app identity when requesting native options:
+
+```json
+{
+  "nativeApp": {
+    "platform": "android",
+    "appId": "com.example.myapp"
+  }
+}
+```
+
+`appId` is the installed app's `applicationId` (package name), not this library's namespace. The
+backend response's `data.options` object is serialized and passed to the SDK unchanged. The SDK
+returns the provider's WebAuthn JSON unchanged for your backend's `/register-verify` or
+`/auth-verify` request.
+
+```kotlin
+import android.app.Activity
+import com.akedly.shield.AkedlyPasskey
+import com.akedly.shield.AkedlyPasskeyNativeException
+
+suspend fun authenticate(activity: Activity, optionsJson: String) {
+    if (!AkedlyPasskey.isNativeSupported(activity)) {
+        useHostedPasskeyFallback()
+        return
+    }
+
+    try {
+        val authResponseJson = AkedlyPasskey.authenticate(activity, optionsJson)
+        myBackend.verifyPasskey(authResponseJson)
+    } catch (error: AkedlyPasskeyNativeException) {
+        when (error.reason) {
+            AkedlyPasskeyNativeException.Reason.UNSUPPORTED -> useHostedPasskeyFallback()
+            AkedlyPasskeyNativeException.Reason.CANCELLED,
+            AkedlyPasskeyNativeException.Reason.NO_CREDENTIAL,
+            AkedlyPasskeyNativeException.Reason.INVALID_OPTIONS,
+            AkedlyPasskeyNativeException.Reason.FAILED -> runOtpFallback()
+        }
+    }
+}
+```
+
+`AkedlyPasskey.register(activity, optionsJson)` has the same contract for enrollment. The native
+failure categories are `UNSUPPORTED`, `CANCELLED`, `NO_CREDENTIAL`, `INVALID_OPTIONS`, and
+`FAILED`; a DOM/provider error name is available as `error.domError` when Credential Manager
+reports one. The native API is Kotlin-coroutines only; Java callers should use the hosted
+`AkedlyPasskey.launch` API. Every native non-success needs a fallback: `UNSUPPORTED` may use the
+hosted passkey ceremony as shown above, while the other reasons should use the merchant's OTP
+flow. `NO_CREDENTIAL` is an Android-native outcome, and the SDK itself has no network failure
+case because your backend owns the options and verification requests. A backend
+`PASSKEY_REPROOF_REQUIRED` response is handled by the merchant's ordinary OTP flow. A coroutine
+`CancellationException` is rethrown so structured cancellation remains intact.
+
+#### Android App Registration and signing fingerprints
+
+Register the package name and every SHA-256 signing certificate that must work in the Akedly
+dashboard. Use the **Play App Signing certificate** for an app distributed through Google Play,
+the **upload certificate** for locally signed/uploaded builds, and the **debug certificate** for
+local debug installs. Find the Play App Signing certificate in Play Console's app-signing page.
+The installed APK's certificate must be approved; the upload key and Play App Signing key are
+often different.
+
+```bash
+./gradlew signingReport
+keytool -list -v -keystore <upload.keystore> -alias <alias>
+```
+
+Copy the SHA-256 value exactly as printed (colon-separated hexadecimal). Akedly derives the
+`android:apk-key-hash:<base64url>` WebAuthn origin and publishes the corresponding Digital Asset
+Links statement. A build signed with an unregistered certificate fails verification and should
+fall back to OTP; it is not fixed by changing the JSON passed to Credential Manager.
+
+### Hosted browser ceremony
 
 Run a hosted V1.2 passkey ceremony on `auth.akedly.io/pk` from an Android app. The shipped
 launcher opens a **browser-backed Custom Tab** on the akedly.io origin — so platform passkeys
