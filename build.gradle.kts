@@ -1,19 +1,15 @@
 plugins {
-    id("com.android.library") version "8.2.2"
-    kotlin("android") version "1.9.22"
+    id("com.android.library") version "8.6.1"
+    kotlin("android") version "2.1.20"
     `maven-publish`
 }
 
 group = "com.akedly"
-// 1.1.0, not 1.0.0: this release adds the whole `AkedlyPasskey` surface (launch / buildUrl /
-// parseResult / parseResultFromQuery). Additive, so a minor bump — and it matches
-// akedly-shield-dart 1.1.0, which shipped the same feature. Publishing new public API under an
-// unchanged coordinate leaves consumers no way to ask for the version that has it.
-version = "1.1.0"
+version = "1.2.0"
 
 android {
     namespace = "com.akedly.shield"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         minSdk = 24
@@ -43,6 +39,9 @@ dependencies {
     // two gaps that broke the build on the old kotlin("jvm") module.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.browser:browser:1.7.0")
+    implementation("androidx.credentials:credentials:1.6.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
+    implementation("com.google.android.gms:play-services-base:18.7.2")
 
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
