@@ -48,10 +48,55 @@ class AkedlyPasskeyException(message: String, cause: Throwable? = null) : Except
  * Manager) work — and returns via a deep link to your app's custom scheme. You register a
  * tiny redirect `Activity` (an `<intent-filter>` on the scheme) that hands the `Uri` to
  * [parseResult]. No WebView, no Digital Asset Links setup. See the README for the Activity +
- * manifest snippet, and the SDK-free flow.
+ * manifest snippet, and the SDK-free flow. The native [register] and [authenticate] members use
+ * Android Credential Manager directly on Android 9+ when [isNativeSupported] is true; they need
+ * an approved Android App Registration and Digital Asset Links instead of the hosted redirect.
  */
 object AkedlyPasskey {
     const val DEFAULT_ORIGIN = "https://auth.akedly.io"
+
+    /**
+     * Register a passkey through Android Credential Manager.
+     *
+     * Pass [optionsJson] unchanged from the `data.options` object returned by your backend's
+     * native `/register-options` request. The returned JSON is the WebAuthn registration response
+     * to post to your backend's `/register-verify` endpoint. Use [isNativeSupported] first and
+     * fall back to [launch] when native support is unavailable.
+     *
+     * @param activity the foreground Activity that owns the Credential Manager UI
+     * @param optionsJson the serialized WebAuthn creation options from your backend
+     * @throws AkedlyPasskeyNativeException when the provider cannot complete the ceremony
+     */
+    @JvmStatic
+    suspend fun register(activity: Activity, optionsJson: String): String =
+        nativeRegister(activity, optionsJson)
+
+    /**
+     * Authenticate with a passkey through Android Credential Manager.
+     *
+     * Pass [optionsJson] unchanged from the `data.options` object returned by your backend's
+     * native `/auth-options` request. The returned JSON is the WebAuthn authentication response to
+     * post to your backend's `/auth-verify` endpoint. Use [isNativeSupported] first and fall back
+     * to [launch] when native support is unavailable.
+     *
+     * @param activity the foreground Activity that owns the Credential Manager UI
+     * @param optionsJson the serialized WebAuthn request options from your backend
+     * @throws AkedlyPasskeyNativeException when the provider cannot complete the ceremony
+     */
+    @JvmStatic
+    suspend fun authenticate(activity: Activity, optionsJson: String): String =
+        nativeAuthenticate(activity, optionsJson)
+
+    /**
+     * Return whether this device can attempt a native passkey ceremony.
+     *
+     * Native ceremonies require Android 9 (API 28) or newer. Android 9 through Android 13 also
+     * require an available Google Play Services credential provider; Android 14 and newer can use
+     * the platform Credential Manager without Play Services. This check does not verify that an
+     * app's package and signing fingerprint have been approved by Akedly.
+     */
+    @JvmStatic
+    fun isNativeSupported(context: Context): Boolean = nativeIsSupported(context)
 
     /**
      * Build the ceremony URL: `<origin>/pk?token=…&returnUrl=<scheme>://akedly-passkey`.

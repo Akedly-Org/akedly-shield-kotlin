@@ -1,13 +1,14 @@
 # AGENTS.md — akedly-shield-kotlin
 
-Android/Kotlin client SDK for Akedly's **V1.2 secure REST API**. Three independent pieces under
+Android/Kotlin client SDK for Akedly's **V1.2 secure REST API**. Four independent pieces under
 `src/main/kotlin/com/akedly/shield/`:
 
 | File | What it does |
 |---|---|
 | `Solver.kt` | Proof-of-work solver — finds a nonce whose `sha256(challenge + ":" + nonce)` has N leading zeros |
 | `Turnstile.kt` | Cloudflare Turnstile helper |
-| `Passkey.kt` | Hosted V1.2 passkey ceremony at `auth.akedly.io/pk` |
+| `Passkey.kt` | Hosted V1.2 ceremony and public hosted/native API surface |
+| `PasskeyNative.kt` | Android Credential Manager native passkey ceremony |
 
 Backend lives in a separate repo (`Akedly`). This SDK never talks to Akedly directly on the
 customer's behalf — the customer's own backend proxies, holding the API key.
@@ -19,9 +20,9 @@ customer's behalf — the customer's own backend proxies, holding the API key.
 ./gradlew build
 ```
 
-**Local Gradle is currently blocked** by an AGP 8.2.2 vs cmdline-tools SDK-repo-XML v4 mismatch, and
-there is **no CI in this repo**. So: never claim a compile or a test run you did not actually see
-succeed. If you cannot build, say so plainly and state what you verified by reading instead.
+**Local Gradle is unavailable on this VPS because no Java/JDK is installed.** GitHub Actions CI is
+the build evidence for this repository. Never claim a compile or a test run you did not actually
+see succeed. If you cannot build, say so plainly and state what you verified by reading instead.
 
 ## Conventions
 
@@ -101,12 +102,13 @@ What must be preserved when touching `launch()`:
   because an Application context without it throws `AndroidRuntimeException`, which would escape the
   `ActivityNotFoundException` catch and crash the caller.
 
-**Build constraint:** `androidx.browser:browser:1.7.0`'s AAR requires `minCompileSdk=34`, and this
-module sits at exactly 34 — **zero margin. Do not lower `compileSdk`.**
+**Build constraint:** `androidx.browser:browser:1.7.0` requires `minCompileSdk=34`, while the
+Credential Manager 1.6.0 AARs require `minCompileSdk=35` and AGP 8.6.0. Keep `compileSdk` at 35
+or higher; do not lower it.
 
-⚠️ **None of this has ever been compiled** (OI-B): no JDK/Android SDK is available in this
-environment. The launcher was verified by reading and by bytecode inspection of the dependency —
-raising confidence, but **not a compile, and it must never be relayed as one.**
+⚠️ **Local compilation is unavailable**: this VPS has no JDK or Android SDK. GitHub Actions CI
+builds the release artifact with JDK 17; local source and diff checks must not be relayed as a
+successful compile or test run.
 
 ## Gotchas
 
