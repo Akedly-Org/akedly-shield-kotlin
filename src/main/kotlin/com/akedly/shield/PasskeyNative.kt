@@ -57,8 +57,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * Describes a failure from an Android Credential Manager passkey ceremony.
  *
  * @property reason the stable failure category an app can use to choose its fallback flow
- * @property domError the WebAuthn DOM error name when [reason] is [Reason.FAILED] because the
- *   credential provider rejected the ceremony
+ * @property domError the WebAuthn DOM error name when the credential provider rejected the
+ *   ceremony, including `NotAllowedError` when [reason] is [Reason.CANCELLED]
  */
 class AkedlyPasskeyNativeException @JvmOverloads constructor(
     val reason: Reason,
@@ -178,6 +178,12 @@ internal fun mapCredentialFailure(error: Throwable): AkedlyPasskeyNativeExceptio
         is GetCredentialUnsupportedException -> AkedlyPasskeyNativeException.Reason.UNSUPPORTED
 
         is IllegalArgumentException -> AkedlyPasskeyNativeException.Reason.INVALID_OPTIONS
+        is CreatePublicKeyCredentialDomException ->
+            if (error.domError is NotAllowedError) AkedlyPasskeyNativeException.Reason.CANCELLED
+            else AkedlyPasskeyNativeException.Reason.FAILED
+        is GetPublicKeyCredentialDomException ->
+            if (error.domError is NotAllowedError) AkedlyPasskeyNativeException.Reason.CANCELLED
+            else AkedlyPasskeyNativeException.Reason.FAILED
         else -> AkedlyPasskeyNativeException.Reason.FAILED
     }
     val domError = when (error) {

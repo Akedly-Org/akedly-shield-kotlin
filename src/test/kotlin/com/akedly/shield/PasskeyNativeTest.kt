@@ -2,6 +2,9 @@ package com.akedly.shield
 
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.NoCredentialException
+import androidx.credentials.exceptions.domerrors.NotAllowedError
+import androidx.credentials.exceptions.publickeycredential.CreatePublicKeyCredentialDomException
+import androidx.credentials.exceptions.publickeycredential.GetPublicKeyCredentialDomException
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -9,6 +12,22 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
 
 class PasskeyNativeTest {
+
+    @Test
+    fun getNotAllowedErrorMapsToCancelledWithDomError() {
+        val mapped = mapCredentialFailure(GetPublicKeyCredentialDomException(NotAllowedError()))
+
+        assertEquals(AkedlyPasskeyNativeException.Reason.CANCELLED, mapped.reason)
+        assertEquals("NotAllowedError", mapped.domError)
+    }
+
+    @Test
+    fun createNotAllowedErrorMapsToCancelledWithDomError() {
+        val mapped = mapCredentialFailure(CreatePublicKeyCredentialDomException(NotAllowedError()))
+
+        assertEquals(AkedlyPasskeyNativeException.Reason.CANCELLED, mapped.reason)
+        assertEquals("NotAllowedError", mapped.domError)
+    }
 
     @Test
     fun registrationOptionsJsonIsPassedToPlatformUnchanged() {
