@@ -192,10 +192,16 @@ suspend fun authenticate(activity: Activity, optionsJson: String) {
             AkedlyPasskeyNativeException.Reason.NO_CREDENTIAL,
             AkedlyPasskeyNativeException.Reason.INVALID_OPTIONS,
             AkedlyPasskeyNativeException.Reason.FAILED -> runOtpFallback()
+            else -> runOtpFallback()
         }
     }
 }
 ```
+
+Call `register` and `authenticate` from `lifecycleScope` or `viewModelScope`, not `GlobalScope`,
+because the Activity is held for the duration of the suspended call.
+
+New reasons may be added in minor releases; keep an `else` fallback when handling `Reason`.
 
 `AkedlyPasskey.register(activity, optionsJson)` has the same contract for enrollment. The native
 failure categories are `UNSUPPORTED`, `CANCELLED`, `NO_CREDENTIAL`, `INVALID_OPTIONS`, and

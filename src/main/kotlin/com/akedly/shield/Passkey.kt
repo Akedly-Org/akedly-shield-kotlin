@@ -41,15 +41,14 @@ data class AkedlyPasskeyResult(
 class AkedlyPasskeyException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**
- * Hosted and native V1.2 passkey ceremonies for Android.
+ * Hosted V1.2 passkey ceremony for Android.
  *
- * [launch] opens the hosted ceremony in a Chrome Custom Tab on the akedly.io origin and returns
- * through a deep link parsed by [parseResult]. The hosted flow does not use a WebView or require
- * Digital Asset Links. See the README for the Activity and manifest snippet.
- *
- * The native [register] and [authenticate] members use Android Credential Manager directly on
- * Android 9+ when [isNativeSupported] is true. They require an approved Android App Registration
- * and Digital Asset Links instead of the hosted redirect.
+ * The ceremony always runs in a Chrome Custom Tab, rendered by the device's default browser, on
+ * the akedly.io origin — so platform passkeys (fingerprint / face / device PIN via Credential
+ * Manager) work — and returns via a deep link to your app's custom scheme. You register a
+ * tiny redirect `Activity` (an `<intent-filter>` on the scheme) that hands the `Uri` to
+ * [parseResult]. No WebView, no Digital Asset Links setup. See the README for the Activity +
+ * manifest snippet, and the SDK-free flow.
  */
 object AkedlyPasskey {
     const val DEFAULT_ORIGIN = "https://auth.akedly.io"

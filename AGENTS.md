@@ -20,9 +20,10 @@ customer's behalf — the customer's own backend proxies, holding the API key.
 ./gradlew build
 ```
 
-**Local Gradle is unavailable on this VPS because no Java/JDK is installed.** GitHub Actions CI is
-the build evidence for this repository. Never claim a compile or a test run you did not actually
-see succeed. If you cannot build, say so plainly and state what you verified by reading instead.
+**The dev VPS has JDK 21 and an Android SDK at `/opt/android-sdk`.** Verify builds and tests
+with the available toolchain when present; GitHub Actions CI also provides build evidence. Never
+claim a compile or a test run you did not actually see succeed. If you cannot build, say so plainly
+and state what you verified by reading instead.
 
 ## Conventions
 
@@ -108,9 +109,9 @@ What must be preserved when touching `launch()`:
 Credential Manager 1.6.0 AARs require `minCompileSdk=35` and AGP 8.6.0. Keep `compileSdk` at 35
 or higher; do not lower it.
 
-⚠️ **Local compilation is unavailable**: this VPS has no JDK or Android SDK. GitHub Actions CI
-builds the release artifact with JDK 17; local source and diff checks must not be relayed as a
-successful compile or test run.
+**Toolchain verification:** the dev VPS has JDK 21 and `/opt/android-sdk`; verify with the
+toolchain when present. GitHub Actions CI builds the release artifact with JDK 17. Local source
+and diff checks must not be relayed as a successful compile or test run.
 
 ## Gotchas
 
